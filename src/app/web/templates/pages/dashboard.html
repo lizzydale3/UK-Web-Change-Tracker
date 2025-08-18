@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}Internet Tracker - Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+  {% include "header.html" %}
+  {% include "navigation.html" %}
+  
+
+
+  <!-- Quick Actions -->
+  <div class="card">
+    <div class="h2 mb-4">Quick Actions</div>
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <a href="/http" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-colors">
+        <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-blue-600 text-lg">📊</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">HTTP Traffic Analysis</div>
+          <div class="text-sm text-gray-500">Detailed traffic patterns & insights</div>
+        </div>
+      </a>
+      
+      <a href="/l3" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-red-300 hover:bg-red-50 transition-colors">
+        <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-red-600 text-lg">🛡️</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">L3 Attack Analysis</div>
+          <div class="text-sm text-gray-500">Target & origin attack data</div>
+        </div>
+      </a>
+      
+      <a href="/ooni" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-green-300 hover:bg-green-50 transition-colors">
+        <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-red-600 text-lg">🌐</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">Tor Metrics</div>
+          <div class="text-sm text-gray-500">OONI reachability data</div>
+        </div>
+      </a>
+      
+      <a href="/bot" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-purple-300 hover:bg-purple-50 transition-colors">
+        <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-purple-600 text-lg">🤖</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">Bot Traffic</div>
+          <div class="text-sm text-gray-500">Automated traffic analysis</div>
+        </div>
+      </a>
+      
+      <a href="/domains" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-orange-300 hover:bg-orange-50 transition-colors">
+        <div class="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-orange-600 text-lg">🌍</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">Top Domains</div>
+          <div class="text-sm text-gray-500">Age gate compliance data</div>
+        </div>
+      </a>
+      
+      <a href="/trends" class="flex items-center p-4 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-colors">
+        <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center mr-3">
+          <span class="text-indigo-600 text-lg">📈</span>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900">Google Trends</div>
+          <div class="text-sm text-gray-500">VPN & search trends</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="card">
+    <div class="h2 mb-4">Recent Activity</div>
+    <div class="text-sm text-gray-600 space-y-2">
+      <div class="flex justify-between">
+        <span>Last data update:</span>
+        <span id="lastUpdate">Loading...</span>
+      </div>
+      <div class="flex justify-between">
+        <span>Current event:</span>
+        <span id="currentEvent">Loading...</span>
+      </div>
+      <div class="flex justify-between">
+        <span>Data coverage:</span>
+        <span id="dataCoverage">Loading...</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Load overview data
+  loadOverview();
+});
+
+async function loadOverview() {
+  try {
+    // Load current event
+    const events = await fetch('/api/events').then(r => r.json());
+    const currentEvent = events.events?.[0] || events?.[0];
+    
+    if (currentEvent) {
+      document.getElementById('currentEvent').textContent = currentEvent.name || currentEvent.slug;
+      document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+    }
+  } catch (e) {
+    console.error('Error loading overview:', e);
+  }
+}
+
+async function loadHTTPOverview(ev) {
+  try {
+    const payload = await fetch(`/api/timeseries?country=${ev.country}&metric=http_requests_norm&since=${new Date(Date.now() - 24*60*60*1000).toISOString()}&until=${new Date().toISOString()}`).then(r => r.json());
+    const points = payload.results || payload || [];
+    if (points.length > 0) {
+      const recent = points.slice(-6); // Last 6 hours
+      const avg = recent.reduce((sum, p) => sum + (p.value || p.y || 0), 0) / recent.length;
+      document.getElementById('httpOverview').textContent = avg.toFixed(2) + 'x';
+    }
+  } catch (e) {
+    document.getElementById('httpOverview').textContent = 'Error';
+  }
+}
+
+async function loadL3Overview(ev) {
+  try {
+    const [target, origin] = await Promise.all([
+      fetch(`/api/timeseries?country=${ev.country}&metric=l3_bytes_target&since=${new Date(Date.now() - 24*60*60*1000).toISOString()}&until=${new Date().toISOString()}`).then(r => r.json()),
+      fetch(`/api/timeseries?country=${ev.country}&metric=l3_bytes_origin&since=${new Date(Date.now() - 24*60*60*1000).toISOString()}&until=${new Date().toISOString()}`).then(r => r.json())
+    ]);
+    
+    const targetPoints = target.results || target || [];
+    const originPoints = origin.results || origin || [];
+    
+    if (targetPoints.length > 0 || originPoints.length > 0) {
+      const maxTarget = Math.max(...targetPoints.map(p => p.value || p.y || 0));
+      const maxOrigin = Math.max(...originPoints.map(p => p.value || p.y || 0));
+      const max = Math.max(maxTarget, maxOrigin);
+      document.getElementById('l3Overview').textContent = max.toFixed(1) + 'x';
+    }
+  } catch (e) {
+    document.getElementById('l3Overview').textContent = 'Error';
+  }
+}
+
+async function loadTorOverview(ev) {
+  try {
+    const payload = await fetch(`/api/ooni/tor?country=${ev.country}&days=7`).then(r => r.json());
+    const points = payload.results || payload || [];
+    if (points.length > 0) {
+      const recent = points.slice(-3); // Last 3 days
+      const avg = recent.reduce((sum, p) => sum + (p.ok_rate || 0), 0) / recent.length;
+      document.getElementById('torOverview').textContent = (avg * 100).toFixed(0) + '%';
+    }
+  } catch (e) {
+    document.getElementById('torOverview').textContent = 'Error';
+  }
+}
+
+async function loadBotOverview(ev) {
+  try {
+    const payload = await fetch(`/api/timeseries?country=${ev.country}&metric=bot_traffic&since=${new Date(Date.now() - 24*60*60*1000).toISOString()}&until=${new Date().toISOString()}`).then(r => r.json());
+    const points = payload.results || payload || [];
+    if (points.length > 0) {
+      const recent = points.slice(-6); // Last 6 hours
+      const avg = recent.reduce((sum, p) => sum + (p.value || p.y || 0), 0) / recent.length;
+      document.getElementById('l3Overview').textContent = (avg * 100).toFixed(0) + '%';
+    }
+  } catch (e) {
+    document.getElementById('botOverview').textContent = 'Error';
+  }
+}
+</script>
+{% endblock %}

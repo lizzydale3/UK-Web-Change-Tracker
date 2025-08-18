@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}HTTP Traffic Analysis{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+  {% include "header.html" %}
+  {% include "navigation.html" %}
+  
+  <!-- HTTP Chart Section -->
+  {% include "http_chart.html" %}
+  
+  <!-- Data Insights Section -->
+  {% include "data_insights.html" %}
+  
+  <!-- Back to Dashboard -->
+  <div class="text-center">
+    <a href="/" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+      ← Back to Dashboard
+    </a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "scripts.html" %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Load only HTTP-related data
+  loadEvents().then(events => {
+    if (events.length > 0) {
+      const currentEvent = events[0];
+      loadHTTP(currentEvent);
+      loadDataInsights(currentEvent);
+    }
+  });
+});
+
+async function loadEvents() {
+  try {
+    const data = await fetch('/api/events').then(r => r.json());
+    return data.events || data || [];
+  } catch (e) {
+    console.error('Error loading events:', e);
+    return [];
+  }
+}
+
+async function loadDataInsights(ev) {
+  // Only load HTTP insights
+  const httpInsight = document.getElementById('httpInsight');
+  if (httpInsight && window.httpChart && window.httpChart.data.datasets[0] && window.httpChart.data.datasets[0].data.length > 0) {
+    const values = window.httpChart.data.datasets[0].data.map(p => p.y);
+    const max = Math.max(...values);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    httpInsight.textContent = `Peak: ${max.toFixed(1)}x normal`;
+  }
+}
+</script>
+{% endblock %}

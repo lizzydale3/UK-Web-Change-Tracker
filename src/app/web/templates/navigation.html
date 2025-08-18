@@ -1,0 +1,24 @@
+<nav class="bg-white border-b border-gray-200 sticky top-0 z-10">
+  <div class="max-w-6xl mx-auto px-4">
+    <div class="flex space-x-8 overflow-x-auto py-3">
+      <a href="/" class="nav-link whitespace-nowrap">Dashboard</a>
+      <a href="/http" class="nav-link whitespace-nowrap">HTTP Traffic</a>
+      <a href="/l3" class="nav-link whitespace-nowrap">L3 Attacks</a>
+      <a href="/ooni" class="nav-link whitespace-nowrap">OONI Tor</a>
+      <a href="/bot" class="nav-link whitespace-nowrap">Bot Traffic</a>
+      <a href="/domains" class="nav-link whitespace-nowrap">Top Domains</a>
+      <a href="/trends" class="nav-link whitespace-nowrap">Google Trends</a>
+    </div>
+  </div>
+</nav>
+
+<style>
+.nav-link {
+  @apply text-gray-600 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200;
+}
+.nav-link:hover {
+  @apply bg-blue-50;
+}
+</style>
+
+

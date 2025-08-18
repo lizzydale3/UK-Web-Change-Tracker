@@ -1,0 +1,19 @@
+<!-- OONI row (full width) -->
+<div id="ooni-tor" class="grid md:grid-cols-1 gap-6">
+  <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <div class="h2">OONI Tor OK Rate</div>
+      <div id="ooniStatus" class="muted"></div>
+    </div>
+    <div class="text-xs text-gray-500 mb-2">Success rate of Tor connections (0.0 = 0%, 1.0 = 100%)</div>
+    <canvas id="ooniChart" height="130"></canvas>
+  </div>
+  <div class="card">
+    <div class="h2 mb-2">About Tor reachability</div>
+    <div class="text-sm text-gray-600 space-y-2 leading-relaxed">
+      <p><strong>Metric</strong>: fraction of Tor reachability measurements classified as OK in OONI data. Daily aggregation.</p>
+      <p><strong>Use</strong>: drops signal active interference or breakage in the Tor bootstrap path. Cross-reference with HTTP dips and L3 spikes around events.</p>
+      <p class="opacity-70">Source: OONI Aggregation API (tools: tor, snowflake, psiphon).</p>
+    </div>
+  </div>
+</div>

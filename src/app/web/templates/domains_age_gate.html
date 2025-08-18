@@ -1,0 +1,41 @@
+<div id="top-domains" class="grid md:grid-cols-2 gap-6">
+  <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <div class="h2">Top Domains</div>
+      <div id="topStatus" class="muted"></div>
+    </div>
+    <div class="mb-2">
+      <input id="topFilter" class="w-full rounded-md border-gray-300 focus:border-blue-500 focus:ring-blue-500" placeholder="Filter domains…" />
+    </div>
+    <div class="overflow-auto scroll-y-200">
+      <table class="w-full text-sm">
+        <thead class="text-left text-gray-500">
+          <tr><th class="py-2 pr-4">#</th><th class="py-2 pr-4">Domain</th></tr>
+        </thead>
+        <tbody id="topTable"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <div class="h2">Age‑gate Status</div>
+      <div class="muted">UK compliance (2025-07-25+)</div>
+    </div>
+    <div id="ageGateStatus" class="space-y-2">
+      <div class="text-center text-gray-500">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div class="grid md:grid-cols-1 gap-6">
+  <div class="card">
+    <div class="flex items-center justify-between mb-3">
+      <div class="h2">Age‑gate in Top‑100 (daily count)</div>
+      <div class="muted">UK</div>
+    </div>
+    <div class="text-xs text-gray-500 mb-2">Number of Top‑100 ranked UK domains that were age‑gated on each day (July 24 onwards).</div>
+    <canvas id="ageGatePctChart" height="130"></canvas>
+  </div>
+</div>
+
+

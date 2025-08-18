@@ -1,0 +1,650 @@
+<script>
+const $ = s => document.querySelector(s);
+const httpChartEl = $("#httpChart");
+const l3TargetChartEl = $("#l3TargetChart");
+const l3OriginChartEl = $("#l3OriginChart");
+const ooniChartEl = $("#ooniChart");
+const botChartEl = $("#botChart");
+let httpChart, l3TargetChart, l3OriginChart, ooniChart, botChart, currentEvent;
+let ageGatePctChart;
+
+// Tiny helpers (no jQuery in this page)
+function showEl(el){ if(el){ el.style.display = ""; } }
+function hideEl(el){ if(el){ el.style.display = "none"; } }
+
+function fmtLine(label, data, color){
+  return {label,data,borderWidth:2,pointRadius:0,tension:.2,borderColor:color};
+}
+function ensureChart(canvas){
+  return new Chart(canvas,{type:"line",data:{datasets:[]},options:{
+    responsive:true,animation:false,
+    plugins:{legend:{display:true},annotation:{annotations:{}}},
+    scales:{
+      x:{type:"time",time:{unit:"day"},ticks:{maxRotation:0}},
+      y:{beginAtZero:true,ticks:{callback:function(value){return value.toLocaleString()}},suggestedMin:0}
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index'
+    },
+    elements: {
+      point: {
+        radius: 0,
+        hoverRadius: 4
+      }
+    }
+  }});
+}
+
+async function loadAgeGatePct(ev){
+  try{
+    const payload = await getJSON(`/api/age-gate/timeseries?country=${ev.country}&since=2025-07-24&limit=100`);
+    const pts = normalizeTS(payload);
+    if(!ageGatePctChart) ageGatePctChart = ensureChart(document.getElementById("ageGatePctChart"));
+    
+    // Configure for bar chart with count data
+    ageGatePctChart.options.scales.y.min = 0;
+    ageGatePctChart.options.scales.y.ticks.callback = v => Math.round(v);
+    ageGatePctChart.options.scales.y.title = { display: true, text: 'Number of Age-Gated Domains' };
+    
+    // Change to bar chart
+    ageGatePctChart.data.datasets = [{
+      label: 'Age-Gated Count',
+      data: pts,
+      backgroundColor: 'rgba(99,102,241,0.8)',
+      borderColor: 'rgba(99,102,241,1)',
+      borderWidth: 1,
+      type: 'bar'
+    }];
+    
+    ageGatePctChart.update();
+  }catch(e){ console.error('Age-gate chart error:', e); }
+}
+
+function setEventAnnotation(chart, isoDate, label){
+  const d=new Date(isoDate+"T00:00:00Z");
+  chart.options.plugins.annotation.annotations={
+    eventLine:{type:"line",xMin:d,xMax:d,borderColor:"rgba(220,38,38,.9)",borderWidth:2,
+      label:{display:true,position:"start",backgroundColor:"rgba(220,38,38,.9)",color:"#fff",content:label}},
+    windowShade:{type:"box",xMin:new Date(d.getTime()-7*864e5),xMax:new Date(d.getTime()+7*864e5),
+      yMin:-1e12,yMax:1e12,backgroundColor:"rgba(59,130,246,.08)",borderWidth:0}
+  };
+  chart.update("none");
+}
+
+async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
+function normalizeTS(payload){
+  let arr=[]; 
+  if(Array.isArray(payload)) arr=payload;
+  else if(payload && Array.isArray(payload.points)) arr=payload.points;
+  else if(payload && Array.isArray(payload.results)) arr=payload.results;
+  else if(payload && Array.isArray(payload.data)) arr=payload.data;
+  
+  const result = arr.map(p=>{
+    const ts=p.ts||p.time||p.date||p.t||p.timestamp;
+    const v=p.value ?? p.y ?? (p.requests?p.requests.normalized:undefined) ?? p.count ?? p.ok_rate;
+    return (ts!=null && v!=null)?{x:new Date(String(ts)),y:Number(v)}:null;
+  }).filter(Boolean);
+  
+  return result;
+}
+
+function movingAverage(points, windowSize){
+  if(!points || points.length===0) return [];
+  const out=[]; const w=windowSize; let sum=0; const q=[];
+  for(const p of points){
+    sum += p.y; q.push(p.y);
+    if(q.length>w) sum -= q.shift();
+    out.push({x:p.x, y: sum / q.length});
+  }
+  return out;
+}
+
+function removeCyclicalPatterns(points) {
+  if(!points || points.length < 48) return points; // Need at least 2 days of hourly data
+  
+  // Calculate hourly patterns (24-hour cycle)
+  const hourlyPatterns = new Array(24).fill(0);
+  const hourlyCounts = new Array(24).fill(0);
+  
+  // Group by hour and calculate average for each hour
+  points.forEach(p => {
+    const hour = p.x.getHours();
+    hourlyPatterns[hour] += p.y;
+    hourlyCounts[hour]++;
+  });
+  
+  // Calculate average for each hour
+  for(let i = 0; i < 24; i++) {
+    if(hourlyCounts[i] > 0) {
+      hourlyPatterns[i] /= hourlyCounts[i];
+    }
+  }
+  
+  // Calculate overall baseline
+  const baseline = hourlyPatterns.reduce((sum, val) => sum + val, 0) / 24;
+  
+  // Remove hourly patterns and center around baseline
+  return points.map(p => {
+    const hour = p.x.getHours();
+    const expectedValue = hourlyPatterns[hour];
+    const deviation = p.y - expectedValue;
+    return {
+      x: p.x,
+      y: baseline + deviation // Center deviations around baseline
+    };
+  });
+}
+
+function updateBadges(ev){ 
+  $("#countryBadge").textContent=ev.country; 
+  $("#dateBadge").textContent=ev.event_date;
+  $("#currentEventName").textContent=ev.name || ev.slug;
+}
+
+async function loadEvents(){
+  const data=await getJSON("/api/events");
+  const events=data.events||data||[];
+  currentEvent=events[0];
+  updateBadges(currentEvent);
+}
+
+async function loadHTTP(ev){
+  $("#httpStatus").innerHTML='<span class="spinner"></span>';
+  showEl($("#httpLoading"));
+  hideEl($("#httpChart"));
+  try{
+    // Use 15-day window since data only starts from July 18
+    const eventDate = new Date(ev.event_date);
+    const since = new Date(eventDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days before
+    const until = new Date(eventDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days after
+    
+    const payload=await getJSON(`/api/timeseries?country=${ev.country}&metric=http_requests_norm&since=${since}&until=${until}`);
+    console.log("HTTP payload:", payload);
+    const pts=normalizeTS(payload);
+    console.log("HTTP normalized points:", pts);
+    
+    if(!httpChart) {
+      httpChart=ensureChart(httpChartEl);
+      // Customize HTTP chart for better scaling
+      httpChart.options.scales.y.ticks.callback = function(value) {
+        if (value >= 1e9) return (value / 1e9).toFixed(1) + 'B';
+        if (value >= 1e6) return (value / 1e6).toFixed(1) + 'M';
+        if (value >= 1e3) return (value / 1e3).toFixed(1) + 'K';
+        return value.toLocaleString();
+      };
+      // Scale to fit actual normalized data range
+      httpChart.options.scales.y.suggestedMin = 0.4;
+      httpChart.options.scales.y.suggestedMax = 0.9;
+    }
+    // Force exact 15d window on x-axis (limited data)
+    httpChart.options.scales.x.min = new Date(since);
+    httpChart.options.scales.x.max = new Date(until);
+    
+    if(pts.length > 0) {
+      // Better normalization: remove cyclical patterns and focus on deviations
+      const normalizedPts = removeCyclicalPatterns(pts);
+      const ma = movingAverage(normalizedPts, 24);
+      
+      httpChart.data.datasets=[
+        fmtLine("HTTP Requests (normalized)",normalizedPts,"rgba(37,99,235,.8)"),
+        {
+          label: "HTTP 24h MA",
+          data: ma,
+          borderColor: "rgba(30,64,175,0.6)",
+          backgroundColor: "rgba(30,64,175,0.1)",
+          borderWidth: 1,
+          borderDash: [5, 5],
+          pointRadius: 0,
+          fill: false
+        }
+      ];
+      
+      // Update chart title to reflect normalization
+      httpChart.options.plugins.title = {
+        display: true,
+        text: 'HTTP Traffic - Cyclical Patterns Removed'
+      };
+      
+      setEventAnnotation(httpChart,ev.event_date,ev.slug);
+      httpChart.update();
+      $("#httpStatus").textContent=`${pts.length} points (normalized)`;
+      hideEl($("#httpLoading"));
+      showEl($("#httpChart"));
+    } else {
+      $("#httpStatus").textContent="no data";
+      $("#httpLoading").innerHTML='<div class="text-center py-8 text-gray-500">No HTTP data available for this country/event</div>';
+    }
+  }catch(e){ 
+    console.error("HTTP loading error:", e);
+    $("#httpStatus").textContent="error";
+    $("#httpLoading").innerHTML='<div class="text-center py-8 text-red-500">Error loading HTTP data</div>';
+  }
+}
+
+async function loadL3(ev){
+  $("#l3TargetStatus").innerHTML='<span class="spinner"></span>';
+  $("#l3OriginStatus").innerHTML='<span class="spinner"></span>';
+  showEl($("#l3TargetLoading"));
+  showEl($("#l3OriginLoading"));
+  hideEl($("#l3TargetChart"));
+  hideEl($("#l3OriginChart"));
+  try{
+    // Use 15-day window for all charts since data only starts from July 18
+    const eventDate = new Date(ev.event_date);
+    const since = new Date(eventDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days before
+    const until = new Date(eventDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days after
+    
+    const [t,o]=await Promise.all([
+      getJSON(`/api/timeseries?country=${ev.country}&metric=l3_bytes_target&since=${since}&until=${until}`),
+      getJSON(`/api/timeseries?country=${ev.country}&metric=l3_bytes_origin&since=${since}&until=${until}`)
+    ]);
+    
+    console.log("L3 target payload:", t);
+    console.log("L3 origin payload:", o);
+    
+    const target=normalizeTS(t), origin=normalizeTS(o);
+    console.log("L3 normalized target:", target);
+    console.log("L3 normalized origin:", origin);
+    
+    if(!l3TargetChart) {
+      l3TargetChart=ensureChart(l3TargetChartEl);
+      // User-friendly y-axis labels for normalized values (0-1 range)
+      l3TargetChart.options.scales.y.ticks.callback = function(value) {
+        return (value * 100).toFixed(0) + '%';
+      };
+      l3TargetChart.options.scales.y.type = 'linear';
+      l3TargetChart.options.scales.y.min = 0;
+      l3TargetChart.options.scales.y.max = 1;
+      l3TargetChart.options.scales.y.ticks.stepSize = 0.2; // Show ticks at 0%, 20%, 40%, 60%, 80%, 100%
+    }
+    // Exact 15d window on x-axis (limited data)
+    l3TargetChart.options.scales.x.min = new Date(since);
+    l3TargetChart.options.scales.x.max = new Date(until);
+    if(!l3OriginChart) {
+      l3OriginChart=ensureChart(l3OriginChartEl);
+      // User-friendly y-axis labels for normalized values (0-1 range)
+      l3OriginChart.options.scales.y.ticks.callback = function(value) {
+        return (value * 100).toFixed(0) + '%';
+      };
+      l3OriginChart.options.scales.y.type = 'linear';
+      l3OriginChart.options.scales.y.min = 0;
+      l3OriginChart.options.scales.y.max = 1;
+      l3OriginChart.options.scales.y.ticks.stepSize = 0.2; // Show ticks at 0%, 20%, 40%, 60%, 80%, 100%
+    }
+    // Exact 15d window on x-axis for origin (limited data)
+    l3OriginChart.options.scales.x.min = new Date(since);
+    l3OriginChart.options.scales.x.max = new Date(until);
+
+    // target
+    if(target.length > 0) {
+      // Cool blue distinct from event line
+      l3TargetChart.data.datasets=[fmtLine("Target Attacks",target,"rgba(2,132,199,.95)")];
+      setEventAnnotation(l3TargetChart,ev.event_date,ev.slug);
+      l3TargetChart.update();
+      $("#l3TargetStatus").textContent=`${target.length} points`;
+      hideEl($("#l3TargetLoading"));
+      showEl($("#l3TargetChart"));
+    } else {
+      $("#l3TargetStatus").textContent="no data";
+      $("#l3TargetLoading").innerHTML='<div class="text-center py-8 text-gray-500">No L3 target data</div>';
+    }
+
+    // origin
+    if(origin.length > 0) {
+      l3OriginChart.data.datasets=[fmtLine("Origin Attacks",origin,"rgba(16,185,129,.9)")];
+      setEventAnnotation(l3OriginChart,ev.event_date,ev.slug);
+      l3OriginChart.update();
+      $("#l3OriginStatus").textContent=`${origin.length} points`;
+      hideEl($("#l3OriginLoading"));
+      showEl($("#l3OriginChart"));
+    } else {
+      $("#l3OriginStatus").textContent="no data";
+      $("#l3OriginLoading").innerHTML='<div class="text-center py-8 text-red-500">No L3 origin data</div>';
+    }
+  }catch(e){ 
+    console.error("L3 loading error:", e);
+    $("#l3TargetStatus").textContent="error";
+    $("#l3OriginStatus").textContent="error";
+    $("#l3TargetLoading").innerHTML='<div class="text-center py-8 text-red-500">Error loading L3 data</div>';
+    $("#l3OriginLoading").innerHTML='<div class="text-center py-8 text-red-500">Error loading L3 data</div>';
+  }
+}
+
+async function loadOONI(ev){
+  $("#ooniStatus").innerHTML='<span class="spinner"></span>';
+  try{
+    const payload=await getJSON(`/api/ooni/tor?country=${ev.country}&days=180`);
+    const rows=(payload.results||[]);
+    const pts=rows.map(r=>({x:new Date(String(r.date)),y:Number(r.ok_rate)}));
+    if(!ooniChart) ooniChart=ensureChart(ooniChartEl);
+    ooniChart.data.datasets=[fmtLine("tor ok_rate",pts,"rgba(236,72,153,.8)")];
+    ooniChart.options.scales.y.suggestedMax=1; setEventAnnotation(ooniChart,ev.event_date,ev.slug);
+    $("#ooniStatus").textContent=pts.length?`${pts.length} points`:"no data";
+  }catch(e){ $("#ooniStatus").textContent="error"; }
+}
+
+async function loadBotTraffic(ev){
+  $("#botStatus").innerHTML='<span class="spinner"></span>';
+  showEl($("#botLoading"));
+  hideEl($("#botChart"));
+  try{
+    const payload=await getJSON(`/api/timeseries?country=${ev.country}&metric=bot_traffic&days=60`);
+    console.log("Bot traffic payload:", payload);
+    const pts=normalizeTS(payload);
+    console.log("Bot traffic normalized points:", pts);
+    
+    if(!botChart) {
+      botChart=ensureChart(botChartEl);
+      // Customize bot chart for percentage values (0-1)
+      botChart.options.scales.y.min = 0;
+      botChart.options.scales.y.max = 1;
+      botChart.options.scales.y.ticks.callback = function(value) {
+        return (value * 100).toFixed(0) + '%';
+      };
+    }
+    
+    if(pts.length > 0) {
+      botChart.data.datasets=[fmtLine("Bot Traffic %",pts,"rgba(147,51,234,.9)")];
+      setEventAnnotation(botChart,ev.event_date,ev.slug);
+      botChart.update();
+      $("#botStatus").textContent=`${pts.length} points`;
+      hideEl($("#botLoading"));
+      showEl($("#botChart"));
+    } else {
+      $("#botStatus").textContent="no data";
+      $("#botLoading").innerHTML='<div class="text-center py-8 text-gray-500">No bot traffic data available for this country/event</div>';
+    }
+  }catch(e){ 
+    console.error("Bot traffic loading error:", e);
+    $("#botStatus").textContent="error";
+    $("#botLoading").innerHTML='<div class="text-center py-8 text-red-500">Error loading bot traffic data</div>';
+  }
+}
+
+function renderTopTable(rows){
+  const tbody=$("#topTable"), q=$("#topFilter").value.trim().toLowerCase(); tbody.innerHTML="";
+  rows.filter(r=>!q||(String(r.domain).toLowerCase().includes(q)||String(r.category||"").toLowerCase().includes(q)))
+    .forEach(r=>{
+      const tr=document.createElement("tr");
+      const ageGateStatus = r.age_gate?.status || "unknown";
+      
+      // Better status labels and colors
+      let statusLabel, statusColor;
+      if (ageGateStatus === "yes") {
+        statusLabel = "BLOCKED";
+        statusColor = "text-red-600";
+      } else if (ageGateStatus === "no") {
+        statusLabel = "OPEN";
+        statusColor = "text-green-600";
+      } else {
+        statusLabel = "UNKNOWN";
+        statusColor = "text-gray-500";
+      }
+      
+      tr.innerHTML=`<td class="py-1 pr-4 text-gray-500">${r.rank??""}</td>
+        <td class="py-1 pr-4 font-medium">${r.domain??""}</td>`;
+      tbody.appendChild(tr);
+    });
+}
+
+async function loadTopDomains(ev){
+  $("#topStatus").innerHTML='<span class="spinner"></span>';
+  
+  // Only show age-gate data for UK
+  if(ev.country !== "GB") {
+    $("#topStatus").textContent="UK only";
+    $("#topTable").innerHTML='<tr><td colspan="4" class="text-center py-4 text-gray-500">Age-gate data only available for UK</td></tr>';
+    return;
+  }
+  
+  try{
+    // First get the top 20 domains
+    const topPayload = await getJSON(`/api/top-domains/age-gated?country=${ev.country}&limit=20`);
+    const topRows = topPayload.results || topPayload || [];
+    
+    // Then get age gate status for these domains
+    const ageGatePayload = await getJSON(`/api/age-gate/status?country=${ev.country}&limit=100`);
+    const ageGateRows = ageGatePayload.results || [];
+    
+    // Create a map of domain -> age gate status
+    const ageGateMap = {};
+    ageGateRows.forEach(row => {
+      ageGateMap[row.domain] = row.status;
+    });
+    
+    // Merge the data
+    const mergedRows = topRows.map(domainRow => ({
+      ...domainRow,
+      age_gate: {
+        status: ageGateMap[domainRow.domain] || "unknown"
+      }
+    }));
+    
+    renderTopTable(mergedRows);
+    $("#topStatus").textContent=mergedRows.length?`${mergedRows.length} rows`:"no data";
+    
+
+  }catch(e){ 
+    $("#topStatus").textContent="error";
+    console.error("Error loading top domains:", e);
+  }
+}
+
+async function loadAgeGateStatus(ev){
+  const statusEl = $("#ageGateStatus");
+  const cardEl = $("#ageGateCard");
+  
+  // Only show age-gate data for UK
+  if(ev.country !== "GB") {
+    hideEl(cardEl);
+    return;
+  }
+  
+  showEl(cardEl);
+  statusEl.innerHTML='<div class="text-center"><span class="spinner"></span> Loading...</div>';
+  try{
+    const payload=await getJSON(`/api/age-gate/status?country=${ev.country}&limit=20`);
+    const rows=payload.results||[];
+    const counts=payload.counts||{};
+    
+    let html = '<div class="grid grid-cols-2 gap-2 mb-2">';
+    html += `<div class="text-center p-2 bg-red-50 rounded"><div class="text-sm font-bold text-red-600">${counts.yes || 0}</div><div class="text-xs text-red-500">Gated</div></div>`;
+    html += `<div class="text-center p-2 bg-green-50 rounded"><div class="text-sm font-bold text-green-600">${counts.no || 0}</div><div class="text-xs text-green-500">Open</div></div>`;
+    html += '</div>';
+    
+    html += '<div class="space-y-1 text-xs">';
+    rows.forEach(r => {
+      const statusColor = r.status === "yes" ? "text-red-600" : r.status === "no" ? "text-green-600" : "text-gray-500";
+      const inTopBadge = r.in_top ? '<span class="ml-1 px-1 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">TOP</span>' : '';
+      html += `<div class="flex justify-between items-center p-1 bg-gray-50 rounded">
+        <span class="font-medium">${r.domain}</span>
+        <div class="flex items-center">
+          <span class="${statusColor} font-medium">${r.status.toUpperCase()}</span>
+          ${inTopBadge}
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    
+    statusEl.innerHTML = html;
+  }catch(e){ 
+    statusEl.innerHTML='<div class="text-center text-red-500 text-xs">Error loading</div>';
+  }
+}
+
+function renderTorPngs(ev){
+  const wrap=$("#torPngGrid"); wrap.innerHTML="";
+  
+  let pngs=[];
+  try{ 
+    pngs = ev.tor_pngs || [];
+  }catch(e){
+    console.log("Error reading tor_pngs:", e);
+  }
+  
+  if(pngs.length > 0) {
+    pngs.forEach(item => {
+      const div=document.createElement("div");
+      div.className="space-y-2 tor-png-container";
+      div.innerHTML=`
+        <h4 class="text-sm font-medium text-gray-700">${item.label}</h4>
+        <img src="${item.url}" alt="Tor PNG" class="rounded-lg border border-gray-200 w-full shadow-sm">`;
+      wrap.appendChild(div);
+    });
+  } else {
+    // Fallback for events without Tor PNGs
+    const div=document.createElement("div");
+    div.className="col-span-2 text-center py-8";
+    div.innerHTML='<div class="text-gray-500">No Tor metrics available for this event</div>';
+    wrap.appendChild(div);
+  }
+}
+
+function fmtDate(d){
+  const y=d.getUTCFullYear(), m=String(d.getUTCMonth()+1).padStart(2,"0"), day=String(d.getUTCDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+
+function renderTrends(ev){
+  const geo=(ev.country||"GB").toUpperCase();
+  const time = "today 3-m";
+  
+  // Render VPN trends
+  renderTrendWidget(ev, "trendsEmbed", "trendsStatus", "vpn", geo, time);
+  
+  // Render Pornhub trends
+  renderTrendWidget(ev, "trendsEmbedPornhub", "trendsStatusPornhub", "pornhub", geo, time);
+}
+
+function renderTrendWidget(ev, targetId, statusId, keyword, geo, time) {
+  const target = document.getElementById(targetId);
+  target.innerHTML = "";
+  
+  const config = {
+    comparisonItem:[{ keyword, geo, time }],
+    category:0,
+    property:""
+  };
+  const ui = {
+    exploreQuery:`date=${encodeURIComponent(time)}&geo=${geo}&q=${keyword}&hl=en`,
+    guestPath:"https://trends.google.com:443/trends/embed/"
+  };
+  
+  // Prefer interactive embed; PNG remains in /api for fallback
+  try {
+    if (window.trends && window.trends.embed && typeof window.trends.embed.renderExploreWidgetTo === 'function') {
+      window.trends.embed.renderExploreWidgetTo(target, "TIMESERIES", config, ui);
+      document.getElementById(statusId).textContent = `${geo} · interactive`;
+    } else {
+      throw new Error('embed not ready');
+    }
+  } catch (e) {
+    const img = document.createElement('img');
+    img.alt = `Google Trends preview (PNG) for ${keyword}`;
+    img.className = 'rounded border border-gray-200';
+    img.src = `/api/trends/png?q=${keyword}&geo=${geo}&time=${encodeURIComponent(time)}`;
+    target.appendChild(img);
+    const link = document.createElement('a');
+    link.href = `https://trends.google.com/trends/explore?date=${encodeURIComponent(time)}&geo=${geo}&q=${keyword}&hl=en`;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.className = 'text-sm underline text-blue-600 block';
+    link.textContent = 'Open interactive Trends in a new tab';
+    target.appendChild(link);
+    document.getElementById(statusId).textContent = `${geo} · PNG fallback`;
+  }
+}
+
+function updateDataInsights(ev) {
+  // Calculate insights from loaded data
+  const httpInsight = $("#httpInsight");
+  const l3Insight = $("#l3Insight");
+  const botInsight = $("#botInsight");
+  const ooniInsight = $("#ooniInsight");
+  const eventInsight = $("#eventInsight");
+  const qualityInsight = $("#qualityInsight");
+  
+  // HTTP Traffic insight
+  if (httpChart && httpChart.data.datasets[0] && httpChart.data.datasets[0].data.length > 0) {
+    const values = httpChart.data.datasets[0].data.map(p => p.y);
+    const max = Math.max(...values);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    httpInsight.textContent = `Peak: ${max.toFixed(1)}x normal`;
+  }
+  
+  // L3 Attacks insight (combine target + origin if available)
+  const l3TargetValues = (l3TargetChart && l3TargetChart.data.datasets[0]) ? l3TargetChart.data.datasets[0].data.map(p=>p.y) : [];
+  const l3OriginValues = (l3OriginChart && l3OriginChart.data.datasets[0]) ? l3OriginChart.data.datasets[0].data.map(p=>p.y) : [];
+  const l3All = l3TargetValues.concat(l3OriginValues);
+  if (l3All.length > 0) {
+    const max = Math.max(...l3All);
+    l3Insight.textContent = `Peak: ${max.toFixed(3)}x normal`;
+  }
+  
+  // Bot Traffic insight
+  if (botChart && botChart.data.datasets[0] && botChart.data.datasets[0].data.length > 0) {
+    const values = botChart.data.datasets[0].data.map(p => p.y);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const recent = values.slice(-24).reduce((a, b) => a + b, 0) / Math.min(24, values.length);
+    botInsight.textContent = `Avg: ${(avg * 100).toFixed(0)}%, Recent: ${(recent * 100).toFixed(0)}%`;
+  }
+  
+  // Tor Success insight
+  if (ooniChart && ooniChart.data.datasets[0] && ooniChart.data.datasets[0].data.length > 0) {
+    const values = ooniChart.data.datasets[0].data.map(p => p.y);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const min = Math.min(...values);
+    ooniInsight.textContent = `Avg: ${(avg * 100).toFixed(0)}%, Min: ${(min * 100).toFixed(0)}%`;
+  }
+  
+  // Event Impact assessment
+  const eventDate = new Date(ev.event_date + "T00:00:00Z");
+  const now = new Date();
+  const daysSinceEvent = Math.floor((now - eventDate) / (1000 * 60 * 60 * 24));
+  
+  if (daysSinceEvent >= 0 && daysSinceEvent <= 30) {
+    eventInsight.textContent = `${daysSinceEvent} days since event`;
+  } else if (daysSinceEvent < 0) {
+    eventInsight.textContent = `${Math.abs(daysSinceEvent)} days until event`;
+  } else {
+    eventInsight.textContent = `${daysSinceEvent} days since event`;
+  }
+  
+  // Data Quality assessment
+  const totalPoints = (httpChart?.data.datasets[0]?.data.length || 0) +
+                     (l3TargetChart?.data.datasets[0]?.data.length || 0) +
+                     (l3OriginChart?.data.datasets[0]?.data.length || 0) +
+                     (botChart?.data.datasets[0]?.data.length || 0) +
+                     (ooniChart?.data.datasets[0]?.data.length || 0); // Count for global OONI
+  
+  if (totalPoints > 1000) {
+    qualityInsight.textContent = "Excellent";
+  } else if (totalPoints > 500) {
+    qualityInsight.textContent = "Good";
+  } else if (totalPoints > 100) {
+    qualityInsight.textContent = "Fair";
+  } else {
+    qualityInsight.textContent = "Limited";
+  }
+}
+
+async function loadAll(ev){
+  currentEvent=ev; updateBadges(ev);
+  const url=new URL(location); url.searchParams.set("event",ev.slug); history.replaceState({}, "", url);
+  renderTorPngs(ev);
+  renderTrends(ev);
+  await Promise.all([loadHTTP(ev),loadL3(ev),loadOONI(ev),loadBotTraffic(ev),loadTopDomains(ev),loadAgeGateStatus(ev),loadAgeGatePct(ev)]);
+  
+  // Update insights after all data is loaded
+  setTimeout(() => updateDataInsights(ev), 500);
+}
+
+document.addEventListener("DOMContentLoaded", async ()=>{
+  $("#year").textContent=new Date().getFullYear();
+  try{ await loadEvents(); }catch(e){ console.error(e); return; }
+  $("#refreshBtn").addEventListener("click", ()=> loadAll(currentEvent));
+  $("#topFilter").addEventListener("input", ()=> loadTopDomains(currentEvent));
+  if(currentEvent) await loadAll(currentEvent);
+});
+</script>
