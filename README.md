@@ -371,3 +371,123 @@ pytest -q
 ## 📜 License
 
 MIT License. See [LICENSE](LICENSE).
+
+## Technologies Used
+
+### Backend Framework
+- **Flask 3.x** - Modern Python web framework for building the API and web application
+- **Flask-CORS** - Cross-Origin Resource Sharing support for API access
+
+### Database
+- **MongoDB** - NoSQL document database for storing time series data, domain rankings, and metrics
+- **PyMongo** - Official MongoDB driver for Python with SRV connection support
+- **MongoDB Atlas** - Cloud-hosted MongoDB service (configurable via environment variables)
+
+### Data Processing & Analytics
+- **Pandas** - Data manipulation and analysis library for processing time series data
+- **NumPy** - Numerical computing library for mathematical operations and statistical analysis
+- **PyTrends** - Unofficial Google Trends API wrapper for fetching search trend data
+
+### Web Scraping & Automation
+- **Pyppeteer** - Headless Chrome automation for taking screenshots of Google Trends pages
+- **Requests** - HTTP library for making API calls to external services
+
+### Security & Encryption
+- **Cryptography** - Cryptographic recipes and primitives for data encryption
+- **Fernet** - Symmetric encryption for sensitive data
+- **HMAC** - Hash-based message authentication for data integrity
+
+### Development & Testing
+- **Pytest** - Testing framework for Python
+- **Responses** - Mock library for testing HTTP requests
+- **MongoMock** - MongoDB mocking for testing
+- **FreezeGun** - Time freezing for deterministic testing
+
+### Configuration & Environment
+- **Python-dotenv** - Environment variable management from .env files
+
+## Data Used
+
+### Cloudflare Radar Data
+- **HTTP Request Metrics** - Normalized HTTP request counts by country and time
+- **Traffic Patterns** - Web traffic analysis and trends
+- **Geographic Distribution** - Country-specific internet usage data
+- **Bot Traffic** - Automated traffic detection and analysis
+
+### OONI (Open Observatory of Network Interference) Data
+- **Tor Reachability** - Daily Tor network accessibility metrics by country
+- **Snowflake Proxy** - Censorship circumvention tool availability
+- **Psiphon** - VPN tool reachability and performance
+- **Measurement Data** - Network interference detection results
+
+### Domain Ranking Data
+- **Top Domains** - Country-specific domain popularity rankings
+- **Traffic Volume** - Domain traffic metrics and trends
+- **Category Classification** - Domain categorization (e.g., adult content, social media)
+
+### Age Gate Verification Data
+- **Curated Status** - Manually verified age verification requirements for major platforms
+- **UK Compliance** - Age verification implementation status for UK regulations
+- **Platform Analysis** - Social media, dating, and adult content platform compliance
+
+### Google Trends Data
+- **Search Patterns** - Search term popularity over time
+- **Geographic Trends** - Country-specific search behavior
+- **Temporal Analysis** - Search volume changes around specific events
+
+### Event Registry
+- **UK Age Verification (2025-07-25)** - Primary event tracking for regulatory changes
+- **Tor Metrics Integration** - Tor Project metrics for relay and bridge usage
+- **Country-Specific Events** - Regional internet policy changes and their impacts
+
+## API Endpoints Created
+
+### Health & System Status
+- `GET /api/health` - System health check with database connectivity and configuration status
+- `GET /api/debug-counts` - Collection document counts for data ingestion verification
+
+### Time Series Data
+- `GET /api/timeseries` - HTTP traffic metrics over time with optional control country comparisons
+- `GET /api/window-stats` - Statistical analysis of traffic changes around specific events
+- `GET /api/attacks` - Layer 3 attack metrics and DDoS data over time
+
+### Domain Analysis
+- `GET /api/top-domains` - Country-specific domain popularity rankings with optional category filtering
+- `GET /api/top-domains/age-gated` - Top domains annotated with age verification status
+
+### Age Gate Verification
+- `GET /api/age-gate/status` - Current age verification status for major platforms
+- `GET /api/age-gate/timeseries` - Daily count of age-gated domains in top rankings
+
+### Network Interference (OONI)
+- `GET /api/ooni/tor` - Tor network reachability data with global and country-specific views
+- `GET /api/ooni/reachability` - Multi-tool reachability metrics (Tor, Snowflake, Psiphon)
+
+### Search Trends
+- `GET /api/trends/health` - Google Trends service availability check
+- `GET /api/trends/png` - Screenshot generation of Google Trends pages to avoid rate limiting
+
+### Event Management
+- `GET /api/events` - List of configured events and their metadata
+- `GET /api/event` - Individual event details by slug identifier
+
+### Data Ingestion
+- **Cloudflare Integration** - Automated ingestion of Radar metrics and traffic data
+- **OONI Integration** - Scheduled collection of network interference measurements
+- **MongoDB Indexing** - Automatic creation of database indexes for optimal query performance
+
+### Query Parameters
+All endpoints support flexible querying with:
+- **Country Codes** - ISO country codes (e.g., GB, US, IE)
+- **Date Ranges** - ISO date strings or relative day counts
+- **Metrics** - Specific data types (http_requests_norm, l3_bps, bot_traffic)
+- **Limits** - Result set size controls
+- **Control Groups** - Comparative analysis with other countries
+
+### Response Format
+All API endpoints return consistent JSON responses with:
+- `ok` - Boolean success indicator
+- `time_utc` - ISO timestamp of response generation
+- `country` - Requested country code
+- `data` - Requested information in standardized format
+- `error` - Error details when applicable

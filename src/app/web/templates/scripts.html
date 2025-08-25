@@ -510,16 +510,42 @@ function renderTrends(ev){
   const geo=(ev.country||"GB").toUpperCase();
   const time = "today 3-m";
   
-  // Render VPN trends
-  renderTrendWidget(ev, "trendsEmbed", "trendsStatus", "vpn", geo, time);
-  
-  // Render Pornhub trends
-  renderTrendWidget(ev, "trendsEmbedPornhub", "trendsStatusPornhub", "pornhub", geo, time);
+  // Check trends service health first
+  checkTrendsHealth().then(healthy => {
+    if (!healthy) {
+      console.warn('Trends service unhealthy, using direct links only');
+    }
+    
+    // Render VPN trends
+    renderTrendWidget(ev, "trendsEmbed", "trendsStatus", "vpn", geo, time);
+    
+    // Render Pornhub trends  
+    renderTrendWidget(ev, "trendsEmbedPornhub", "trendsStatusPornhub", "pornhub", geo, time);
+  });
+}
+
+async function checkTrendsHealth() {
+  try {
+    const response = await fetch('/api/trends/health');
+    const data = await response.json();
+    return data.ok === true;
+  } catch (e) {
+    console.warn('Trends health check failed:', e);
+    return false;
+  }
 }
 
 function renderTrendWidget(ev, targetId, statusId, keyword, geo, time) {
   const target = document.getElementById(targetId);
+  const status = document.getElementById(statusId);
+  
+  if (!target || !status) {
+    console.error('Trends target or status element not found');
+    return;
+  }
+  
   target.innerHTML = "";
+  status.textContent = "Loading...";
   
   const config = {
     comparisonItem:[{ keyword, geo, time }],
@@ -531,29 +557,72 @@ function renderTrendWidget(ev, targetId, statusId, keyword, geo, time) {
     guestPath:"https://trends.google.com:443/trends/embed/"
   };
   
-  // Prefer interactive embed; PNG remains in /api for fallback
+  // Try interactive embed first
   try {
     if (window.trends && window.trends.embed && typeof window.trends.embed.renderExploreWidgetTo === 'function') {
       window.trends.embed.renderExploreWidgetTo(target, "TIMESERIES", config, ui);
-      document.getElementById(statusId).textContent = `${geo} · interactive`;
-    } else {
-      throw new Error('embed not ready');
+      status.textContent = `${geo} · interactive`;
+      return;
     }
   } catch (e) {
+    console.warn('Interactive trends failed:', e);
+  }
+  
+  // Fallback to PNG screenshot
+  try {
     const img = document.createElement('img');
     img.alt = `Google Trends preview (PNG) for ${keyword}`;
-    img.className = 'rounded border border-gray-200';
-    img.src = `/api/trends/png?q=${keyword}&geo=${geo}&time=${encodeURIComponent(time)}`;
+    img.className = 'rounded border border-gray-200 w-full';
+    img.style.maxHeight = '400px';
+    img.style.objectFit = 'contain';
+    
+    // Add loading state
+    img.style.opacity = '0.7';
+    img.onload = () => {
+      img.style.opacity = '1';
+      status.textContent = `${geo} · PNG fallback`;
+    };
+    img.onerror = () => {
+      // If PNG fails, show direct link
+      showDirectLinkFallback(target, status, keyword, geo, time);
+    };
+    
+    img.src = `/api/trends/png?q=${encodeURIComponent(keyword)}&geo=${geo}&time=${encodeURIComponent(time)}`;
     target.appendChild(img);
+    
+    // Add direct link below image
     const link = document.createElement('a');
-    link.href = `https://trends.google.com/trends/explore?date=${encodeURIComponent(time)}&geo=${geo}&q=${keyword}&hl=en`;
+    link.href = `https://trends.google.com/trends/explore?date=${encodeURIComponent(time)}&geo=${geo}&q=${encodeURIComponent(keyword)}&hl=en`;
     link.target = '_blank';
     link.rel = 'noreferrer';
-    link.className = 'text-sm underline text-blue-600 block';
+    link.className = 'text-sm underline text-blue-600 block mt-2 text-center';
     link.textContent = 'Open interactive Trends in a new tab';
     target.appendChild(link);
-    document.getElementById(statusId).textContent = `${geo} · PNG fallback`;
+    
+  } catch (e) {
+    console.error('PNG fallback failed:', e);
+    showDirectLinkFallback(target, status, keyword, geo, time);
   }
+}
+
+function showDirectLinkFallback(target, status, keyword, geo, time) {
+  target.innerHTML = `
+    <div class="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+      <div class="text-gray-500 mb-4">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      </div>
+      <p class="text-gray-600 mb-4">Unable to load Google Trends preview</p>
+      <a href="https://trends.google.com/trends/explore?date=${encodeURIComponent(time)}&geo=${geo}&q=${encodeURIComponent(keyword)}&hl=en" 
+         target="_blank" 
+         rel="noreferrer" 
+         class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+        View Trends for "${keyword}"
+      </a>
+    </div>
+  `;
+  status.textContent = `${geo} · direct link`;
 }
 
 function updateDataInsights(ev) {

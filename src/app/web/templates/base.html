@@ -10,17 +10,43 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <script src="https://ssl.gstatic.com/trends_nrtr/4116_RC01/embed_loader.js"></script>
   <script>
-    // Google Trends fallback
+    // Google Trends fallback and initialization
     window.trends = window.trends || {};
-    if (!window.trends.embed) {
+    
+    // Wait for Google Trends to load, with timeout
+    let trendsLoaded = false;
+    const trendsTimeout = setTimeout(() => {
+      if (!trendsLoaded) {
+        console.warn('Google Trends failed to load, using fallback');
+        initTrendsFallback();
+      }
+    }, 5000);
+    
+    // Check if trends loaded successfully
+    if (window.trends && window.trends.embed && typeof window.trends.embed.renderExploreWidgetTo === 'function') {
+      trendsLoaded = true;
+      clearTimeout(trendsTimeout);
+    } else {
+      // Fallback implementation
+      initTrendsFallback();
+    }
+    
+    function initTrendsFallback() {
       window.trends.embed = {
         renderExploreWidgetTo: function(target, type, config, ui) {
           const iframe = document.createElement('iframe');
-          iframe.src = `https://trends.google.com/trends/embed/explore?date=${ui.exploreQuery.split('&')[0].split('=')[1]}&geo=${config.comparisonItem[0].geo}&q=${config.comparisonItem[0].keyword}`;
+          const keyword = config.comparisonItem[0].keyword;
+          const geo = config.comparisonItem[0].geo;
+          const time = config.comparisonItem[0].time || 'today 3-m';
+          
+          iframe.src = `https://trends.google.com/trends/embed/explore?date=${encodeURIComponent(time)}&geo=${geo}&q=${encodeURIComponent(keyword)}&hl=en`;
           iframe.width = '100%';
-          iframe.height = '300';
+          iframe.height = '400';
           iframe.style.border = 'none';
-          iframe.title = 'Google Trends';
+          iframe.title = `Google Trends for ${keyword}`;
+          iframe.style.borderRadius = '8px';
+          iframe.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+          
           target.appendChild(iframe);
         }
       };
@@ -43,6 +69,31 @@
     .tor-png-container { transition: all 0.2s ease; }
     .tor-png-container:hover { transform: scale(1.02); }
     .tor-png-container img { max-width: 100%; height: auto; }
+    
+    /* Trends improvements */
+    .trends-loading { 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      min-height: 200px; 
+      color: #6b7280; 
+    }
+    .trends-error { 
+      background: #fef2f2; 
+      border: 1px solid #fecaca; 
+      border-radius: 8px; 
+      padding: 1rem; 
+      text-align: center; 
+      color: #dc2626; 
+    }
+    .trends-fallback { 
+      background: #f0f9ff; 
+      border: 1px solid #bae6fd; 
+      border-radius: 8px; 
+      padding: 1rem; 
+      text-align: center; 
+      color: #0369a1; 
+    }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
